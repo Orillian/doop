@@ -142,7 +142,7 @@ export function BarPill({ className, ...props }: React.ComponentProps<'div'>) {
 
 /** A quiet text-and-icon action inside a BarPill. */
 export const barPillBtn =
-  'h-[30px] gap-[7px] rounded-[8px] px-2.5 text-[12px] font-normal text-ink hover:bg-paper-deep hover:text-ink [&_svg]:text-ink-soft'
+  'h-[30px] gap-[7px] rounded-[8px] px-2.5 text-[12px] font-medium text-ink hover:bg-paper-deep hover:text-ink [&_svg]:text-ink-soft'
 /** An icon-only action inside a BarPill. */
 export const barPillIconBtn =
   'size-[30px] rounded-[8px] p-0 text-ink-soft hover:bg-paper-deep hover:text-ink disabled:opacity-40'
@@ -150,4 +150,4 @@ export const barPillIconBtn =
 /* the bar's button sizes, so every screen's actions line up */
 export const barGhostBtn = 'h-9 rounded-[10px] bg-surface px-3.5 text-[12.5px] font-medium hover:bg-paper-deep'
 export const barIconBtn = 'size-9 rounded-[10px] bg-surface hover:bg-paper-deep disabled:opacity-40'
-export const barPrimaryBtn = 'h-9 rounded-[10px] px-3.5 text-[12.5px] font-normal'
+export const barPrimaryBtn = 'h-9 rounded-[10px] px-3.5 text-[12.5px] font-medium'
