@@ -257,6 +257,32 @@ function inDocumentOrder(els: Element[]): Element[] {
   return outermost(els).sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
 }
 
+/** What became of the element `selector` names in `before` in `after`, a
+ *  later save of the same frame: `kept` or `gone` when that can be shown,
+ *  `unsure` when it cannot. Its markup missing proves nothing (an edit to its
+ *  text, style or attributes changes that too), so the element is followed
+ *  by its `data-doop-id` when it has one. Without one, fewer elements of its
+ *  shape (its tag tree, which such an edit keeps) mean it went; the same
+ *  number or more could be either, since another edit may have added one. */
+export function elementFate(before: string, after: string, selector: string): 'kept' | 'gone' | 'unsure' {
+  const el = find(parse(before), selector)
+  if (!el) return 'unsure'
+  if (after.includes(el.outerHTML)) return 'kept'
+  const doc = parse(after)
+  const id = el.getAttribute(ELEMENT_ID_ATTR)
+  if (id)
+    return [...doc.querySelectorAll(`[${ELEMENT_ID_ATTR}]`)].some((e) => e.getAttribute(ELEMENT_ID_ATTR) === id)
+      ? 'kept'
+      : 'gone'
+  const shape = shapeOf(el)
+  const count = (d: Document) => [...d.getElementsByTagName(el.tagName)].filter((e) => shapeOf(e) === shape).length
+  return count(doc) < count(el.ownerDocument) ? 'gone' : 'unsure'
+}
+
+function shapeOf(el: Element): string {
+  return `${el.tagName}(${[...el.children].map(shapeOf).join(',')})`
+}
+
 /** The frame's HTML with every element removed, or null when any selector no longer resolves. */
 export function removeElements(html: string, selectors: string[]): string | null {
   const doc = parse(html)

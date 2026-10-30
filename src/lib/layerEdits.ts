@@ -7,6 +7,7 @@ import { carriedCss, newScope, renameInCss, scopeMarkup, withCarriedCss } from '
 import {
   deleteFramesTracked,
   dropEntry,
+  keepTransferDestination,
   recordDrawingTransfer,
   recordUpdate,
   recordUpdates,
@@ -15,6 +16,7 @@ import {
 import {
   buildLayerTree,
   duplicateElements,
+  elementFate,
   elementHtml,
   isElementHidden,
   isElementLocked,
@@ -350,14 +352,19 @@ export function transferLayer(pressed: Frame, selector: string, over: Frame, tar
       .catch(async (err: unknown) => {
         const s = useStore.getState()
         const remote = err instanceof ApiError && err.status === 409 ? (err.body.frame as Frame | undefined) : undefined
-        /* the source was saved again while the destination write was out —
-           a quick edit beside the move — and that save already carried the
-           element's removal (its markup is gone from the saved source, not
-           just moved along by a sibling's deletion): the element lives in
-           the destination alone now, and the move stands rather than being
-           rolled back into nothing */
-        if (saved && !shell && remote?.id === source.id && raw !== null && !remote.html.includes(raw)) {
+        /* the source was saved again while the destination write was out.
+           If that save already carried the element's removal (a quick edit
+           beside the move), it lives in the destination alone now and the
+           move stands rather than being rolled back into nothing. When the
+           saved source cannot show whether the element is still in it, the
+           move stands too, with a word: a copy too many can be deleted, an
+           element rolled back into nothing cannot be recovered */
+        const fate =
+          saved && !shell && remote?.id === source.id ? elementFate(source.html, remote.html, selector) : null
+        if (remote && fate && fate !== 'kept') {
+          keepTransferDestination(entry)
           s.upsertFrame(remote)
+          if (fate === 'unsure') s.pushNotice(changedDuringMove(source))
           return
         }
         dropEntry(entry)
@@ -378,6 +385,10 @@ export function transferLayer(pressed: Frame, selector: string, over: Frame, tar
       }),
   )
   return true
+}
+
+function changedDuringMove(source: Frame): string {
+  return `“${source.name}” changed while the layer moved; check it for a second copy`
 }
 
 /* the standalone's root with its shell-relative size made absolute */
@@ -451,7 +462,8 @@ export async function detachLayer(pressed: Frame, selector: string): Promise<boo
      on the version the press saw: an edit that landed since wins, the
      element stays there, the entry comes out and the copy just made goes
      away — unless that edit already carried the element's removal, in
-     which case the copy is the element's only home and the lift stands */
+     which case the copy is the element's only home and the lift stands. A
+     saved source that cannot show either keeps the copy, with a word */
   const entry = recordDrawingTransfer(
     { before: null, after: created },
     { before: source, after: { ...source, html: emptied } },
@@ -460,8 +472,11 @@ export async function detachLayer(pressed: Frame, selector: string): Promise<boo
     api.updateFrame(source.id, { html: emptied }, source.updatedAt).catch(async (err: unknown) => {
       const s = useStore.getState()
       const remote = err instanceof ApiError && err.status === 409 ? (err.body.frame as Frame | undefined) : undefined
-      if (remote?.id === source.id && !remote.html.includes(markup)) {
+      const fate = remote?.id === source.id ? elementFate(source.html, remote.html, selector) : null
+      if (remote && fate && fate !== 'kept') {
+        keepTransferDestination(entry)
         s.upsertFrame(remote)
+        if (fate === 'unsure') s.pushNotice(changedDuringMove(source))
         return
       }
       dropEntry(entry)

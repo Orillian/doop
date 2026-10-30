@@ -308,6 +308,87 @@ describe('transferLayer', () => {
     expect(updateFrame.mock.calls.map(([id]) => id)).toEqual(['f2', 'f1', 'f2'])
   })
 
+  it('keeps the move and says so when the saved source cannot show whether the element is still there', async () => {
+    const source = frameWith('f1', page('<div><p>A</p><p>B</p></div>'))
+    const dest = frameWith('f2', page('<section></section>'))
+    const conflict = (remoteHtml: string) => {
+      const remote = { ...source, html: remoteHtml, updatedAt: 9 }
+      updateFrame
+        .mockImplementationOnce(() => Promise.resolve({ ...frameWith('f2', ''), updatedAt: 7 } as Frame))
+        .mockImplementationOnce(() =>
+          Promise.reject(Object.assign(new ApiError(409, '{}'), { status: 409, body: { frame: remote } })),
+        )
+      return remote
+    }
+    /* B edited in place, or B removed by a quick edit that also added C: the same two paragraphs either way */
+    for (const remoteHtml of [
+      page('<div><p>A</p><p style="color:red">Bee</p></div>'),
+      page('<div><p>A</p><p>C</p></div>'),
+    ]) {
+      updateFrame.mockClear()
+      useStore.setState({ notice: null })
+      holdCanvas(source, dest)
+      const remote = conflict(remoteHtml)
+      expect(transferLayer(source, P_B, dest, { selector: SECTION, place: 'inside' })).toBe(true)
+      for (let i = 0; i < 6; i++) await Promise.resolve()
+      /* the moved copy is never rolled back into nothing */
+      expect(html('f2')).toMatch(/<section><p[^>]*>B<\/p><\/section>/)
+      expect(html('f1')).toBe(remote.html)
+      expect(updateFrame.mock.calls.map(([id]) => id)).toEqual(['f2', 'f1'])
+      expect(useStore.getState().notice?.text).toBe('“f1” changed while the layer moved; check it for a second copy')
+    }
+  })
+
+  it('undoes only the destination of a move whose source save lost to another editor', async () => {
+    const source = frameWith('f1', page('<div><p>A</p><p>B</p></div>'))
+    const dest = frameWith('f2', page('<section></section>'))
+    holdCanvas(source, dest)
+    const remote = { ...source, html: page('<div><p>A</p><p>Bee</p></div>'), updatedAt: 9 }
+    updateFrame
+      .mockImplementationOnce(() => Promise.resolve({ ...frameWith('f2', ''), updatedAt: 7 } as Frame))
+      .mockImplementationOnce(() =>
+        Promise.reject(Object.assign(new ApiError(409, '{}'), { status: 409, body: { frame: remote } })),
+      )
+    expect(transferLayer(source, P_B, dest, { selector: SECTION, place: 'inside' })).toBe(true)
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    updateFrame.mockClear()
+    await undo()
+    /* the copy comes out of the destination; the other editor's Bee stays */
+    expect(updateFrame.mock.calls.map(([id, patch]) => [id, patch])).toEqual([['f2', { html: dest.html }]])
+    expect(html('f1')).toBe(remote.html)
+  })
+
+  it('follows an element with an id through an edit, and lets the move stand once it is gone', async () => {
+    const source = frameWith('f1', page('<div><p>A</p><p data-doop-id="ab12cd">B</p></div>'))
+    const dest = frameWith('f2', page('<section></section>'))
+    const conflict = (remoteHtml: string) => {
+      updateFrame
+        .mockImplementationOnce(() => Promise.resolve({ ...frameWith('f2', ''), updatedAt: 7 } as Frame))
+        .mockImplementationOnce(() =>
+          Promise.reject(
+            Object.assign(new ApiError(409, '{}'), {
+              status: 409,
+              body: { frame: { ...source, html: remoteHtml, updatedAt: 9 } },
+            }),
+          ),
+        )
+    }
+    holdCanvas(source, dest)
+    /* edited in place, and a same-shaped sibling added: still there by its id */
+    conflict(page('<div><p>A</p><p data-doop-id="ab12cd">Bee</p><p>C</p></div>'))
+    expect(transferLayer(source, P_B, dest, { selector: SECTION, place: 'inside' })).toBe(true)
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    expect(html('f2')).toBe(dest.html)
+    updateFrame.mockClear()
+    holdCanvas(source, dest)
+    /* the id is gone, even though a same-shaped paragraph was added */
+    conflict(page('<div><p>A</p><p>C</p></div>'))
+    expect(transferLayer(source, P_B, dest, { selector: SECTION, place: 'inside' })).toBe(true)
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    expect(html('f2')).toMatch(/<section><p[^>]*>B<\/p><\/section>/)
+    expect(updateFrame.mock.calls.map(([id]) => id)).toEqual(['f2', 'f1'])
+  })
+
   it('keeps the move in its place among the edits made while it saved', async () => {
     const source = frameWith('f1', page('<div><p>A</p><p>B</p></div>'))
     const dest = frameWith('f2', page('<section></section>'))
@@ -427,6 +508,37 @@ describe('detachLayer', () => {
     expect(html('f1')).toBe(remote.html)
     expect(useStore.getState().canvas?.frames.some((f) => f.id === 'new')).toBe(true)
     expect(deleteFrame).not.toHaveBeenCalled()
+  })
+
+  it('keeps the lifted copy and says so when the saved source cannot show whether the element is still there', async () => {
+    const source = frameWith('f1', page('<div><p>A</p><p>B</p></div>'))
+    holdCanvas(source)
+    const remote = { ...source, html: page('<div><p>A</p><p class="big">B, edited</p></div>'), updatedAt: 9 }
+    updateFrame.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new ApiError(409, '{}'), { status: 409, body: { frame: remote } })),
+    )
+    expect(await detachLayer(source, P_B)).toBe(true)
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    expect(html('f1')).toBe(remote.html)
+    expect(useStore.getState().canvas?.frames.some((f) => f.id === 'new')).toBe(true)
+    expect(deleteFrame).not.toHaveBeenCalled()
+    expect(useStore.getState().notice?.text).toBe('“f1” changed while the layer moved; check it for a second copy')
+  })
+
+  it('undoes only the lifted copy when the source save lost to another editor', async () => {
+    const source = frameWith('f1', page('<div><p>A</p><p>B</p></div>'))
+    holdCanvas(source)
+    const remote = { ...source, html: page('<div><p>A</p><p>Bee</p></div>'), updatedAt: 9 }
+    updateFrame.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new ApiError(409, '{}'), { status: 409, body: { frame: remote } })),
+    )
+    expect(await detachLayer(source, P_B)).toBe(true)
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    updateFrame.mockClear()
+    await undo()
+    expect(deleteFrame.mock.calls.map(([id]) => id)).toEqual(['new'])
+    expect(updateFrame).not.toHaveBeenCalled()
+    expect(html('f1')).toBe(remote.html)
   })
 
   it('drops the created frame again when the source save conflicts', async () => {
